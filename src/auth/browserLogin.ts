@@ -24,16 +24,6 @@ interface Cookie {
   domain?: string;
 }
 
-function configRoot(): string {
-  if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support");
-  if (process.platform === "win32") return process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
-  return process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
-}
-
-export function profileDir(): string {
-  return path.join(configRoot(), "overleaf-mcp", "chrome-profile");
-}
-
 async function readDevToolsPort(profile: string, deadline: number): Promise<{ port: number; path: string }> {
   const file = path.join(profile, "DevToolsActivePort");
   while (Date.now() < deadline) {
@@ -114,15 +104,10 @@ export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Pr
   if (injectedSessionMode) throw new Error("Injected session cannot launch a browser; refresh through the launcher.");
   const config = loadConfig();
   const chromePath = await findChrome(config.browserPath);
-  const profile = profileDir();
-  await fs.mkdir(profile, { recursive: true });
-
-  // Remove any DevToolsActivePort left behind by a previous Chrome — if we
-  // read a stale file, we'd try to connect to a port that nothing is bound
-  // to and surface as ECONNREFUSED to the caller. Deleting before spawn
-  // means the file's reappearance is a positive signal that the just-
-  // spawned Chrome is actually listening.
-  await fs.rm(path.join(profile, "DevToolsActivePort"), { force: true });
+  // Throwaway profile: Chrome's Cookies SQLite would hold the session (with
+  // --use-mock-keychain its key is a public constant), so the whole dir is
+  // removed once Chrome has exited (see finally).
+  const profile = await fs.mkdtemp(path.join(os.tmpdir(), "overleaf-mcp-chrome-"));
 
   const args = chromeFlags(profile, config.insecure);
   logger.info(`launching ${chromePath} (profile=${profile})`);
@@ -193,7 +178,11 @@ export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Pr
     // if the window lingers after login.
     if (child.exitCode === null) {
       // Gentle close — Chrome handles SIGTERM by saving session and quitting.
+      const exited = new Promise((r) => child.once("exit", r));
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 10_000))]);
+      if (child.exitCode === null) { child.kill("SIGKILL"); await exited; }
     }
+    await fs.rm(profile, { recursive: true, force: true });
   }
 }
