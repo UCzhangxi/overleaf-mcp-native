@@ -443,19 +443,25 @@ export async function leaveDoc(docId: string): Promise<void> {
 }
 
 export async function applyOtUpdate(docId: string, update: OtUpdate): Promise<void> {
-  await withReconnectingSocket(
-    async () => {
-      if (!active) throw new OverleafApiError(0, "", "no active project — call open_project first");
-      await active.emit("applyOtUpdate", [docId, update]);
-    },
-    // After a reconnect, the fresh socket has no docs joined. Re-join so the
-    // retried applyOtUpdate hits a socket that knows about this doc. Note:
-    // joinDoc returns the current version, but our `update.v` was computed
-    // against the pre-reconnect version. The server's OT layer either accepts
-    // (if the version matches) or rejects with a version-conflict, which we
-    // propagate to the caller — same as if the original emit had failed.
-    async () => { await joinDoc(docId); },
-  );
+  if (!active) throw new OverleafApiError(0, "", "no active project — call open_project first");
+  const projectId = active.projectId;
+  try {
+    // Once emit is attempted, a close/timeout may mean only the ACK was lost.
+    // Never retry this mutation, even after reconnecting or refreshing auth.
+    await active.emit("applyOtUpdate", [docId, update]);
+  } catch (cause) {
+    disconnectActive();
+    const { clearDocCache } = await import("../session/docCache.js");
+    clearDocCache();
+    try {
+      const rejoined = await ensureSocketForProject(projectId);
+      rejoinHook?.(projectId, rejoined.joinedProject);
+      await joinDoc(docId); // Read only; the caller must reconcile the outcome.
+    } catch {
+      // A failed recovery cannot make resubmission safe either.
+    }
+    throw new Error("OT outcome uncertain; re-read and reconcile before another write. Mutation was not replayed.", { cause });
+  }
 }
 
 // Called after withReconnectingSocket silently rejoins a project, so the
