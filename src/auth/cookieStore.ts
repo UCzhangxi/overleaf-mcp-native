@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { logger } from "../util/logger.js";
+import { injectedSessionMode, loadInjectedSession } from "./sessionFd.js";
 
 export interface StoredCookie {
   cookie: string;
@@ -60,17 +61,20 @@ async function writeStore(store: StoreShape): Promise<void> {
 }
 
 export async function loadStored(baseUrl: string): Promise<StoredCookie | null> {
+  if (injectedSessionMode) return loadInjectedSession(baseUrl);
   const store = await readStore();
   return store.hosts[hostKey(baseUrl)] ?? null;
 }
 
 export async function saveStored(baseUrl: string, cookie: string): Promise<void> {
+  if (injectedSessionMode) throw new Error("Injected session cannot be saved to a cookie store.");
   const store = await readStore();
   store.hosts[hostKey(baseUrl)] = { cookie, savedAt: Date.now() };
   await writeStore(store);
 }
 
 export async function clearStored(baseUrl: string): Promise<boolean> {
+  if (injectedSessionMode) throw new Error("Injected session cannot access a cookie store.");
   const store = await readStore();
   const key = hostKey(baseUrl);
   if (!(key in store.hosts)) return false;

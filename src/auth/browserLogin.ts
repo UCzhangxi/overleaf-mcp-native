@@ -12,6 +12,7 @@ import { logger } from "../util/logger.js";
 import { loadConfig } from "../config.js";
 import { CdpClient } from "./cdp.js";
 import { findChrome } from "./chromeFinder.js";
+import { injectedSessionMode } from "./sessionFd.js";
 
 interface CaptureOpts {
   timeoutMs?: number;
@@ -110,6 +111,7 @@ async function waitForDashboard(
 }
 
 export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Promise<string> {
+  if (injectedSessionMode) throw new Error("Injected session cannot launch a browser; refresh through the launcher.");
   const config = loadConfig();
   const chromePath = await findChrome(config.browserPath);
   const profile = profileDir();

@@ -17,6 +17,20 @@ The [`overleaf-workshop`](https://github.com/overleaf-workshop/overleaf-workshop
 
 ## Status
 
+This integration fork retains the native protocol and AGPL-3.0-or-later license.
+It prevents automatic replay after uncertain OT acknowledgements and optionally
+accepts a launcher-owned session over an inherited POSIX pipe/socket descriptor.
+Set `OL_SESSION_FD` to its numeric descriptor (>=3); send UTF-8 JSON
+`{"baseUrl":"https://www.overleaf.com","cookie":"..."}` and close the sending end.
+The descriptor is read once (16 KiB maximum), closed, and the session cached in
+memory across authentication/discovery. Invalid input or rejected/expired auth
+fails closed; injected mode never reads/writes the cookie store or starts a
+browser, including on macOS. No session value goes in argv or environment.
+Launchers must enforce their own account/project/recipient permissions; this
+transport does not make an account session project-scoped. Without this variable,
+ordinary dedicated-profile login and saved-session reuse are unchanged.
+Focused check after `npm run build`: `node --test tests/unit/sessionFd.spec.mjs`.
+
 Working end-to-end against `overleaf.com` — 33 tools, tracked-changes edits and review-panel comments both verified. Published on npm as [`@netique/overleaf-mcp`](https://www.npmjs.com/package/@netique/overleaf-mcp).
 
 ## Tools

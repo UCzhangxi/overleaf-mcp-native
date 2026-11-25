@@ -1,11 +1,11 @@
 // Cookie discovery orchestrator: file first, browser-launch as fallback.
-// No env-var path — the file is the only persistent store, and a stale
-// cookie always recovers by re-launching Chrome. Concurrent callers for
-// the same host share one in-flight promise.
+// Optional inherited-FD sessions bypass persistence and browser recovery.
+// Concurrent callers for the same host share one in-flight promise.
 
 import { logger } from "../util/logger.js";
 import { loadStored, saveStored, clearStored } from "./cookieStore.js";
 import { captureCookie } from "./browserLogin.js";
+import { injectedSessionMode, rejectInjectedSession } from "./sessionFd.js";
 
 const pending = new Map<string, Promise<string>>();
 
@@ -37,6 +37,7 @@ export async function discoverCookie(baseUrl: string): Promise<string> {
 }
 
 export async function evictAndRediscover(baseUrl: string): Promise<string> {
+  if (injectedSessionMode) rejectInjectedSession();
   await clearStored(baseUrl).catch(() => undefined);
   pending.delete(hostKey(baseUrl));
   return discoverCookie(baseUrl);
