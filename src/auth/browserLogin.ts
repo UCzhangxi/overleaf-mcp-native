@@ -112,6 +112,10 @@ export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Pr
   const args = chromeFlags(profile, config.insecure);
   logger.info(`launching ${chromePath} (profile=${profile})`);
   const child = spawn(chromePath, args, { stdio: "ignore", detached: false });
+  // Registered at spawn so an exit (by code or signal) that happens before `finally` is not missed.
+  const exited = new Promise<void>((r) => child.once("exit", () => r()));
+  const hasExited = () => child.exitCode !== null || child.signalCode !== null;
+  const waitExit = (ms: number) => Promise.race([exited, new Promise<void>((r) => setTimeout(r, ms).unref())]);
 
   let earlyExitErr: Error | null = null;
   child.once("exit", (code, signal) => {
@@ -176,12 +180,11 @@ export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Pr
     // Don't reach into the browser process; let it exit on its own when the
     // user closes the window. The dedicated profile means it doesn't matter
     // if the window lingers after login.
-    if (child.exitCode === null) {
+    if (!hasExited()) {
       // Gentle close — Chrome handles SIGTERM by saving session and quitting.
-      const exited = new Promise((r) => child.once("exit", r));
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
-      await Promise.race([exited, new Promise((r) => setTimeout(r, 10_000))]);
-      if (child.exitCode === null) { child.kill("SIGKILL"); await exited; }
+      await waitExit(5_000);
+      if (!hasExited()) { try { child.kill("SIGKILL"); } catch { /* ignore */ } await waitExit(2_000); }
     }
     await fs.rm(profile, { recursive: true, force: true });
   }
