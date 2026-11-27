@@ -186,6 +186,8 @@ export async function captureCookie(baseUrl: string, opts: CaptureOpts = {}): Pr
       await waitExit(5_000);
       if (!hasExited()) { try { child.kill("SIGKILL"); } catch { /* ignore */ } await waitExit(2_000); }
     }
-    await fs.rm(profile, { recursive: true, force: true });
+    // Chrome helpers may still be writing; retry, and never let a cleanup error replace a captured cookie.
+    await fs.rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      .catch((err) => logger.warn(`could not remove temp profile ${profile}: ${(err as Error).message}`));
   }
 }

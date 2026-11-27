@@ -60,6 +60,30 @@ describe("Keychain cookie store (darwin)", { skip: process.platform !== "darwin"
     assert.equal(existsSync(legacyProfile), false);
   });
 
+  it("retires legacy copies when a Keychain login already exists, without overwriting it", async () => {
+    writeFileSync(item, JSON.stringify({ cookie: "overleaf_session2=current", savedAt: 9 }));
+    seedLegacy();
+    assert.equal((await store.loadStored(origin))?.cookie, "overleaf_session2=current");
+    assert.equal(JSON.parse(readFileSync(item, "utf8")).cookie, "overleaf_session2=current");
+    assert.equal(existsSync(legacyFile), false);
+    assert.equal(existsSync(legacyProfile), false);
+    seedLegacy();
+    await store.saveStored(origin, "overleaf_session2=fresh");
+    assert.equal(JSON.parse(readFileSync(item, "utf8")).cookie, "overleaf_session2=fresh");
+    assert.equal(existsSync(legacyFile), false);
+    assert.equal(existsSync(legacyProfile), false);
+  });
+
+  it("treats a Keychain item without a cookie as absent: the legacy cookie replaces it, never deleted unsaved", async () => {
+    for (const bad of ['{"savedAt":1}', '{"cookie":""}', "notjson"]) {
+      writeFileSync(item, bad);
+      seedLegacy();
+      assert.equal((await store.loadStored(origin))?.cookie, "overleaf_session2=legacy", bad);
+      assert.equal(JSON.parse(readFileSync(item, "utf8")).cookie, "overleaf_session2=legacy", bad);
+      assert.equal(existsSync(legacyFile), false, bad);
+    }
+  });
+
   it("keeps the legacy cookie when the Keychain save cannot be verified", async () => {
     seedLegacy();
     writeFileSync(path.join(kc, "mode"), "nosave");

@@ -83,7 +83,11 @@ async function keychainFind(baseUrl: string): Promise<StoredCookie | null> {
   const r = await security(["find-generic-password", "-s", SERVICE, "-a", hostKey(baseUrl), "-w"]);
   if (r.code === NOT_FOUND) return null;
   if (r.code !== 0) throw keychainError("read", r);
-  try { return JSON.parse(r.out.trim()) as StoredCookie; } catch { return null; }
+  // An item without a usable cookie is treated as absent (a valid legacy cookie may then replace it); never as a login.
+  try {
+    const v = JSON.parse(r.out.trim()) as StoredCookie;
+    return typeof v?.cookie === "string" && v.cookie ? v : null;
+  } catch { return null; }
 }
 
 async function keychainSave(baseUrl: string, item: StoredCookie): Promise<void> {
@@ -112,11 +116,18 @@ async function retireLegacy(baseUrl: string): Promise<boolean> {
   return removed;
 }
 
+async function retireLegacyQuietly(baseUrl: string): Promise<void> {
+  try { await retireLegacy(baseUrl); } catch (err) { logger.warn(`could not remove legacy cookie copies: ${(err as Error).message}`); }
+}
+
 export async function loadStored(baseUrl: string): Promise<StoredCookie | null> {
   if (injectedSessionMode) return loadInjectedSession(baseUrl);
   if (KEYCHAIN) {
     const found = await keychainFind(baseUrl);
-    if (found) return found;
+    if (found) {
+      await retireLegacyQuietly(baseUrl); // a verified Keychain login exists: legacy plaintext copies are stale
+      return found;
+    }
     const legacy = (await readStore()).hosts[hostKey(baseUrl)];
     if (!legacy) return null;
     try {
@@ -125,7 +136,7 @@ export async function loadStored(baseUrl: string): Promise<StoredCookie | null> 
       logger.warn(`kept legacy ${cookieFilePath()}: Keychain migration failed: ${(err as Error).message}`);
       return legacy;
     }
-    await retireLegacy(baseUrl);
+    await retireLegacyQuietly(baseUrl);
     return legacy;
   }
   const store = await readStore();
@@ -134,7 +145,10 @@ export async function loadStored(baseUrl: string): Promise<StoredCookie | null> 
 
 export async function saveStored(baseUrl: string, cookie: string): Promise<void> {
   if (injectedSessionMode) throw new Error("Injected session cannot be saved to a cookie store.");
-  if (KEYCHAIN) return keychainSave(baseUrl, { cookie, savedAt: Date.now() });
+  if (KEYCHAIN) {
+    await keychainSave(baseUrl, { cookie, savedAt: Date.now() });
+    return retireLegacyQuietly(baseUrl);
+  }
   const store = await readStore();
   store.hosts[hostKey(baseUrl)] = { cookie, savedAt: Date.now() };
   await writeStore(store);
